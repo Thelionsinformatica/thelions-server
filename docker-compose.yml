@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - Banco de dados central
+  postgresql:
+    image: postgres:15-alpine
+    container_name: thelions-postgresql
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Andre@311407}
+      POSTGRES_USER: ${DB_USER:-thelions}
+      POSTGRES_DB: ${DB_NAME:-thelions}
+      TZ: America/Sao_Paulo
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+      - ./configs/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - thelions-network
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thelions"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Openfire - Servidor XMPP (Chat)
+  openfire:
+    image: quantumobject/docker-openfire:latest
+    container_name: thelions-openfire
+    restart: always
+    environment:
+      TZ: America/Sao_Paulo
+    volumes:
+      - openfire_data:/var/lib/openfire
+      - ./configs/openfire/openfire.xml:/var/lib/openfire/conf/openfire.xml:ro
+      - ./configs/openfire/plugins:/var/lib/openfire/plugins
+    networks:
+      - thelions-network
+    ports:
+      - "9090:9090"   # Admin console (HTTP)
+      - "9091:9091"   # Admin console (HTTPS)
+      - "5222:5222"   # Client connections
+      - "5223:5223"   # Client connections (SSL)
+      - "5269:5269"   # Server to server
+      - "7777:7777"   # File transfer proxy
+      - "7443:7443"   # Secure file transfer
+    depends_on:
+      postgresql:
+        condition: service_healthy
+
+  # GLPI - Helpdesk e Inventário
+  glpi:
+    image: diouxx/glpi:latest
+    container_name: thelions-glpi
+    restart: always
+    environment:
+      TIMEZONE: America/Sao_Paulo
+      GLPI_LANG: pt_BR
+    volumes:
+      - glpi_data:/var/www/html/glpi
+      - ./configs/glpi/config:/var/www/html/glpi/config
+    networks:
+      - thelions-network
+    ports:
+      - "8080:80"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+
+  # Nginx - Reverse Proxy e Portal
+  nginx:
+    image: nginx:alpine
+    container_name: thelions-nginx
+    restart: always
+    volumes:
+      - ./configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./configs/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./portal:/usr/share/nginx/html:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - thelions-network
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - glpi
+      - openfire
+
+  # Portainer - Gerenciamento Docker (Opcional)
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: thelions-portainer
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - thelions-network
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+
+networks:
+  thelions-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgresql_data:
+    driver: local
+  openfire_data:
+    driver: local
+  glpi_data:
+    driver: local
+  portainer_data:
+    driver: local
+  nginx_logs:
+    driver: local
